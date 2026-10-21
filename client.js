@@ -164,9 +164,18 @@ window.__ModuleLoader__.load({
 			const startLogin = async () => {
 				setStatus((prev) => Object.assign({}, prev, { busy: true, error: "" }));
 				try {
-					await api("/login", { method: "POST", body: "{}" });
+					const result = await api("/login", { method: "POST", body: "{}" });
+					// 宿主已启动浏览器：提示用户去看那个窗口扫码
+					if (result && result.started === false) {
+						setStatus((prev) => Object.assign({}, prev, {
+							error: "登录已在等待扫码中，请查看已打开的浏览器窗口。",
+						}));
+					}
 				} catch (error) {
-					setStatus((prev) => Object.assign({}, prev, { busy: false, error: String(error.message || error) }));
+					setStatus((prev) => Object.assign({}, prev, {
+						busy: false,
+						error: "无法连接插件服务（" + String(error.message || error) + "）。请重启 DeepSeek Harness 后重试。",
+					}));
 				}
 			};
 

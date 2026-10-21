@@ -72,10 +72,12 @@ export function apply(ctx, config = {}) {
   const browser = new BilibiliBrowser({ profileDir: config.profileDir, headless: config.headless })
   ctx.effect(() => () => browser.close(), 'bilibili-publisher')
 
-  // 设置页 API：webServer 可能晚于本插件就绪，用条件注入注册。
-  ctx.inject(['webServer'], (httpCtx) => {
-    const webServer = httpCtx.get('webServer')
-    if (!webServer) return
+  // 设置页 API：webServer 可能早于或晚于本插件就绪，两条路径都试一次。
+  // 早到就当场注册；晚到用条件注入等它出现。routesReady 挡住重复注册。
+  let routesReady = false
+  const mountRoutes = (webServer) => {
+    if (routesReady || !webServer) return
+    routesReady = true
     const routes = [
       {
         kind: 'exact',
@@ -110,6 +112,13 @@ export function apply(ctx, config = {}) {
       },
     ]
     for (const route of routes) ctx.effect(() => webServer.register(route), `bilibili-publisher:${route.path}`)
+  }
+
+  // 路径一：服务已在场
+  mountRoutes(ctx.get('webServer'))
+  // 路径二：服务稍后出现
+  ctx.inject(['webServer'], (httpCtx) => {
+    mountRoutes(httpCtx.get('webServer'))
   })
 
   ctx.tools.register(defineTool({

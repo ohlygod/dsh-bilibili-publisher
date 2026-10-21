@@ -1,6 +1,6 @@
-{
+﻿{
   "name": "dsh-bilibili-publisher",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "B站投稿助手 for DeepSeek Harness：上传预填，发布留给人工",
   "type": "module",
   "main": "index.js",
