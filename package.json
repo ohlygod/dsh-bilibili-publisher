@@ -1,0 +1,38 @@
+{
+  "name": "dsh-bilibili-publisher",
+  "version": "0.1.0",
+  "description": "Human-in-the-loop Bilibili upload assistant for DeepSeek Harness: uploads and prefills the submission form, then stops before publishing",
+  "type": "module",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "browser.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-bundle",
+    "bilibili",
+    "playwright"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "selftest": "node selftest.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.61.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "engines": {
+    "node": ">=22.19"
+  }
+}

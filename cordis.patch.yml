@@ -1,0 +1,5 @@
+# Applied by every profile that lists this bundle.
+# The plugin registers model-facing tools on ctx.tools; no config is required.
+- insert:
+    - id: bilibili-publisher
+      name: dsh-bilibili-publisher

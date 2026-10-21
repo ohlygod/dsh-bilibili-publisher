@@ -1,0 +1,94 @@
+/**
+ * DSH 插件入口 — 把 B站投稿能力注册成两个模型可调用的工具。
+ * 自动化逻辑在 browser.js；这里只做工具声明。
+ * @module dsh-bilibili-publisher
+ */
+
+import { defineTool } from '@deepseek-ai/dsh-tools'
+import { BilibiliBrowser } from './browser.js'
+
+export const name = 'dsh-bilibili-publisher'
+export const inject = ['tools']
+
+export function apply(ctx, config = {}) {
+  const browser = new BilibiliBrowser({ profileDir: config.profileDir, headless: config.headless })
+  ctx.effect(() => () => browser.close(), 'bilibili-publisher')
+
+  ctx.tools.register(defineTool({
+    name: 'bilibili_login',
+    description: '打开 B站登录页扫码登录，登录态存在本地，后续上传复用。只需一次。',
+    parameters: {
+      timeoutSeconds: { type: 'integer', required: false, description: '等待扫码秒数，默认 180。' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          loggedIn: { type: 'boolean', required: true },
+          profileDir: { type: 'string', required: true },
+        },
+      },
+      render: (_a, v) => [{
+        type: 'text',
+        text: v.loggedIn ? `已登录，登录态保存在 ${v.profileDir}` : '未完成扫码，准备好后重新运行。',
+      }],
+    },
+    async execute(args) {
+      const { loggedIn } = await browser.login((args.timeoutSeconds ?? 180) * 1000)
+      return { loggedIn, profileDir: browser.profileDir }
+    },
+    presentCall: () => ({ card: 'generic', title: 'B站登录', kind: 'other' }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'bilibili_upload',
+    description:
+      '把本地视频上传到 B站并预填标题、简介、标签、封面，停在发布按钮前等人工确认。'
+      + '不会发布视频，用户需在浏览器里自己点发布。',
+    parameters: {
+      videoPath: { type: 'string', required: true, description: '视频文件绝对路径。' },
+      title: { type: 'string', required: true, description: '标题。' },
+      description: { type: 'string', required: false, description: '简介。' },
+      tags: {
+        type: 'array',
+        required: false,
+        description: '标签，每个元素一个。',
+        items: { type: 'string' },
+      },
+      coverPath: { type: 'string', required: false, description: '封面图绝对路径。' },
+      timeoutSeconds: { type: 'integer', required: false, description: '单字段等待秒数，默认 60。' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          publishFound: { type: 'boolean', required: true },
+          warnings: { type: 'array', required: true, items: { type: 'string' } },
+        },
+      },
+      render: (_a, v) => {
+        const lines = [
+          v.publishFound
+            ? '表单已填好，发布按钮已就位。视频尚未发布。'
+            : '表单已填好，但没找到发布按钮。视频尚未发布。',
+        ]
+        if (v.warnings.length) lines.push(`注意：${v.warnings.join('；')}`)
+        lines.push('请在浏览器里检查并自己点发布。')
+        return [{ type: 'text', text: lines.join('\n') }]
+      },
+    },
+    async execute(args) {
+      return browser.upload({
+        videoPath: args.videoPath,
+        title: args.title,
+        description: args.description,
+        tags: args.tags,
+        coverPath: args.coverPath,
+        timeoutMs: (args.timeoutSeconds ?? 60) * 1000,
+      })
+    },
+    presentCall: a => ({ card: 'generic', title: 'B站投稿', kind: 'other', rawInput: { title: a.title } }),
+  }))
+}
