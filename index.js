@@ -11,7 +11,11 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { BilibiliBrowser } from './browser.js'
 
 export const name = 'dsh-bilibili-publisher'
-export const inject = ['tools']
+
+// 不在此声明 inject：一旦声明，cordis 会给插件建受限子作用域，
+// 隔离组里的 webServer 便不可见（见 dsh-wechat 的同类处理）。
+// 所有服务依赖改在 apply 内部用 ctx.inject 等待。
+export const inject = []
 
 /** 设置页保存的运营配置，与浏览器目录同放一处。 */
 const CONFIG_PATH = join(homedir(), '.dsh', 'bilibili-publisher', 'settings.json')
@@ -72,8 +76,8 @@ export function apply(ctx, config = {}) {
   const browser = new BilibiliBrowser({ profileDir: config.profileDir, headless: config.headless })
   ctx.effect(() => () => browser.close(), 'bilibili-publisher')
 
-  // 设置页 API：webServer 可能早于或晚于本插件就绪，两条路径都试一次。
-  // 早到就当场注册；晚到用条件注入等它出现。routesReady 挡住重复注册。
+  // 设置页 API：等 webServer 就绪后注册路由。
+  // 未声明 inject，因此这里是全局作用域，能看见隔离组里的 webServer。
   let routesReady = false
   const mountRoutes = (webServer) => {
     if (routesReady || !webServer) return
@@ -114,14 +118,27 @@ export function apply(ctx, config = {}) {
     for (const route of routes) ctx.effect(() => webServer.register(route), `bilibili-publisher:${route.path}`)
   }
 
-  // 路径一：服务已在场
+  // 服务若已在场就立即注册，否则等它出现
   mountRoutes(ctx.get('webServer'))
-  // 路径二：服务稍后出现
   ctx.inject(['webServer'], (httpCtx) => {
     mountRoutes(httpCtx.get('webServer'))
   })
 
-  ctx.tools.register(defineTool({
+  // 工具注册同样等 tools 就绪
+  ctx.inject(['tools'], (toolsCtx) => {
+    const tools = toolsCtx.get('tools')
+    if (!tools) return
+    registerTools(tools, browser)
+  })
+}
+
+/**
+ * 在 tools 服务上注册两个模型工具。
+ * @param tools - 工具注册表。
+ * @param browser - 共享的浏览器实例。
+ */
+function registerTools(tools, browser) {
+  tools.register(defineTool({
     name: 'bilibili_login',
     description: '打开 B站登录页扫码登录，登录态存在本地，后续上传复用。只需一次。',
     parameters: {
@@ -148,7 +165,7 @@ export function apply(ctx, config = {}) {
     presentCall: () => ({ card: 'generic', title: 'B站登录', kind: 'other' }),
   }))
 
-  ctx.tools.register(defineTool({
+  tools.register(defineTool({
     name: 'bilibili_upload',
     description:
       '把本地视频上传到 B站并预填标题、简介、标签、封面，停在发布按钮前等人工确认。'
