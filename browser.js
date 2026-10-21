@@ -46,6 +46,7 @@ export class BilibiliBrowser {
   #ctx
   #page
   #closing
+  #loginTask
 
   constructor({ profileDir, headless = false } = {}) {
     this.profileDir = resolve(profileDir ?? join(homedir(), '.dsh', 'bilibili-publisher'))
@@ -101,6 +102,25 @@ export class BilibiliBrowser {
       await page.waitForTimeout(800)
     }
     return { loggedIn: await this.isLoggedIn() }
+  }
+
+  /**
+   * 后台登录：立刻返回，扫码在已打开的浏览器窗口完成。
+   * 重复调用返回同一进行中的登录，不会开第二个窗口。
+   * @param {number} timeoutMs - 最长等待扫码时间。
+   * @returns {{started: boolean}} 本次是否新启动了登录。
+   */
+  startLogin(timeoutMs = 300_000) {
+    if (this.#loginTask) return { started: false }
+    this.#loginTask = this.login(timeoutMs)
+      .catch(() => ({ loggedIn: false }))
+      .finally(() => { this.#loginTask = undefined })
+    return { started: true }
+  }
+
+  /** 只读登录态，未启动浏览器时不启动。 */
+  async status() {
+    return { loggedIn: await this.isLoggedIn(), profileDir: this.profileDir }
   }
 
   /** 上传并预填，返回是否找到发布按钮。绝不提交。 */

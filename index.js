@@ -4,15 +4,113 @@
  * @module dsh-bilibili-publisher
  */
 
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { BilibiliBrowser } from './browser.js'
 
 export const name = 'dsh-bilibili-publisher'
 export const inject = ['tools']
 
+/** 设置页保存的运营配置，与浏览器目录同放一处。 */
+const CONFIG_PATH = join(homedir(), '.dsh', 'bilibili-publisher', 'settings.json')
+
+const DEFAULT_CONFIG = Object.freeze({
+  defaultTags: '',
+  defaultDescription: '',
+  autoOpenBrowser: true,
+})
+
+/** 读配置；文件缺失或损坏时退回默认值。 */
+function readConfig() {
+  try {
+    const parsed = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
+    return { ...DEFAULT_CONFIG, ...parsed }
+  } catch {
+    return { ...DEFAULT_CONFIG }
+  }
+}
+
+/** 写配置；返回写入后的完整值。 */
+function writeConfig(next) {
+  const merged = {
+    defaultTags: typeof next.defaultTags === 'string' ? next.defaultTags : DEFAULT_CONFIG.defaultTags,
+    defaultDescription: typeof next.defaultDescription === 'string' ? next.defaultDescription : DEFAULT_CONFIG.defaultDescription,
+    autoOpenBrowser: next.autoOpenBrowser !== false,
+  }
+  mkdirSync(dirname(CONFIG_PATH), { recursive: true })
+  writeFileSync(CONFIG_PATH, `${JSON.stringify(merged, null, 2)}\n`, 'utf8')
+  return merged
+}
+
+/** 读完请求体并解析 JSON，空体视为 {}。 */
+function readJson(req) {
+  return new Promise((resolveBody) => {
+    let raw = ''
+    req.on('data', (chunk) => { raw += chunk })
+    req.on('end', () => {
+      try {
+        resolveBody(raw ? JSON.parse(raw) : {})
+      } catch {
+        resolveBody({})
+      }
+    })
+    req.on('error', () => resolveBody({}))
+  })
+}
+
+/** 统一 JSON 响应。 */
+function sendJson(res, status, body) {
+  res.statusCode = status
+  res.setHeader('Content-Type', 'application/json; charset=utf-8')
+  res.setHeader('Cache-Control', 'no-store')
+  res.end(JSON.stringify(body))
+}
+
 export function apply(ctx, config = {}) {
   const browser = new BilibiliBrowser({ profileDir: config.profileDir, headless: config.headless })
   ctx.effect(() => () => browser.close(), 'bilibili-publisher')
+
+  // 设置页 API：webServer 可能晚于本插件就绪，用条件注入注册。
+  ctx.inject(['webServer'], (httpCtx) => {
+    const webServer = httpCtx.get('webServer')
+    if (!webServer) return
+    const routes = [
+      {
+        kind: 'exact',
+        path: '/bilibili/api/status',
+        handler: async (_req, res) => {
+          const status = await browser.status()
+          sendJson(res, 200, status)
+        },
+      },
+      {
+        kind: 'exact',
+        path: '/bilibili/api/config',
+        handler: async (req, res) => {
+          if (req.method === 'POST') {
+            sendJson(res, 200, writeConfig(await readJson(req)))
+            return
+          }
+          sendJson(res, 200, readConfig())
+        },
+      },
+      {
+        kind: 'exact',
+        path: '/bilibili/api/login',
+        handler: async (req, res) => {
+          if (req.method !== 'POST') {
+            sendJson(res, 405, { error: 'POST only' })
+            return
+          }
+          const { started } = browser.startLogin()
+          sendJson(res, 200, { started })
+        },
+      },
+    ]
+    for (const route of routes) ctx.effect(() => webServer.register(route), `bilibili-publisher:${route.path}`)
+  })
 
   ctx.tools.register(defineTool({
     name: 'bilibili_login',
@@ -80,11 +178,16 @@ export function apply(ctx, config = {}) {
       },
     },
     async execute(args) {
+      // 设置页里的默认值只在调用方没给时才补，显式参数始终优先。
+      const saved = readConfig()
+      const tags = args.tags?.length
+        ? args.tags
+        : saved.defaultTags.split(/[,，]/).map(t => t.trim()).filter(Boolean)
       return browser.upload({
         videoPath: args.videoPath,
         title: args.title,
-        description: args.description,
-        tags: args.tags,
+        description: args.description ?? saved.defaultDescription ?? undefined,
+        tags,
         coverPath: args.coverPath,
         timeoutMs: (args.timeoutSeconds ?? 60) * 1000,
       })
